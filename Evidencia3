@@ -1,0 +1,1003 @@
+import csv
+import re
+import sqlite3
+from openpyxl import Workbook
+import pandas as pd
+import os
+from datetime import datetime
+import datetime as dt
+from datetime import date
+
+
+# Conectar a la base de datos SQLite (creará un nuevo archivo si no existe)
+def connect_to_database():
+    conn = sqlite3.connect('taller_mecanico.db')
+    return conn
+
+# Crear tablas en la base de datos (clientes, servicios, notas)
+def create_tables(conn):
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS clientes (
+        clave INTEGER PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        rfc TEXT NOT NULL,
+        correo TEXT NOT NULL
+    )''')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS servicios (
+        clave INTEGER PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        costo REAL NOT NULL
+    )''')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS notas (
+        folio INTEGER PRIMARY KEY,
+        fecha TEXT NOT NULL,
+        cliente_clave INTEGER NOT NULL,
+        monto REAL NOT NULL,
+        cancelada INTEGER NOT NULL DEFAULT 0, 
+        FOREIGN KEY (cliente_clave) REFERENCES clientes (clave)
+    )''')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS detalle_notas (
+        id INTEGER PRIMARY KEY,
+        nota_folio INTEGER NOT NULL,
+        servicio_clave INTEGER NOT NULL,
+        FOREIGN KEY (nota_folio) REFERENCES notas (folio),
+        FOREIGN KEY (servicio_clave) REFERENCES servicios (clave)
+    )''')
+
+    conn.commit()
+
+patron_rfc_oficial = r'^[A-Z&Ñ]{3,4}[0-9]{2}(0[1-9]|1[012])(0[1-9]|[12][0-9]|3[01])[A-Z0-9]{2}[0-9A]$'
+patron_rfc_reducido = r'^[A-Za-zñÑ&]{3,4}\d{6}\w{3}$'
+patron_rfc_personalizado = r'^(((?!(([CcKk][Aa][CcKkGg][AaOo])|([Bb][Uu][Ee][YyIi])|([Kk][Oo](([Gg][Ee])|([Jj][Oo])))|([Cc][Oo](([Gg][Ee])|([Jj][AaEeIiOo])))|([QqCcKk][Uu][Ll][Oo])|((([Ff][Ee])|([Jj][Oo])|([Pp][Uu]))[Tt][Oo])|([Rr][Uu][Ii][Nn])|([Gg][Uu][Ee][Yy])|((([Pp][Uu])|([Rr][Aa]))[Tt][Aa])|([Pp][Ee](([Dd][Oo])|([Dd][Aa])|([Nn][Ee])))|([Mm](([Aa][Mm][OoEe])|([Ee][Aa][SsRr])|([Ii][Oo][Nn])|([Uu][Ll][Aa])|([Ee][Oo][Nn])|([Oo][Cc][Oo])))))[A-Za-zñÑ&][aeiouAEIOUxX]?[A-Za-zñÑ&]{2}(((([02468][048])|([13579][26]))0229)|(\d{2})((02((0[1-9])|1\d|2[0-8]))|((((0[13456789])|1[012]))((0[1-9])|((1|2)\d)|30))|(((0[13578])|(1[02]))31)))[a-zA-Z1-9]{2}[\dAa])|([Xx][AaEe][Xx]{2}010101000))$'
+
+patron_rfc_caracter_por_caracter = r'^[A-Za-zñÑ&]{1,2}([A-Za-zñÑ&]([A-Za-zñÑ&](\d(\d(\d(\d(\d(\d(\w(\w(\w)?)?)?)?)?)?)?)?)?)?)?$'
+
+def validar_rfc(rfc):
+    if re.match(patron_rfc_oficial, rfc) or re.match(patron_rfc_reducido, rfc) or re.match(patron_rfc_personalizado, rfc):
+        return True
+    else:
+        return False
+
+
+def validar_correo(correo):
+  
+    patron_correo = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    
+    if re.match(patron_correo, correo):
+        return True
+    else:
+        return False 
+    
+
+def obtener_fecha_valida(formato='DD-MM-YYYY'):
+    while True:
+        fecha_input = input(f'Ingresa la fecha ({formato}) ')
+        fecha_input = fecha_input.strip()
+
+        if fecha_input == '':
+            continue  # Si se deja en blanco, continuar pidiendo la fecha
+
+        if formato == 'DD-MM-YYYY':
+            try:
+                dia, mes, anio = map(int, fecha_input.split('-'))
+                fecha_nota = datetime(anio, mes, dia)
+                return fecha_nota
+            except ValueError:
+                print("El formato de fecha ingresado no es válido. Utiliza el formato 'DD-MM-YYYY'.")
+        else:
+            print("Formato de fecha no válido. Utiliza el formato 'DD-MM-YYYY'.")
+
+def registrar_nota(conn):
+    while True:
+        try:
+            fecha_nota = None
+            while fecha_nota is None:
+                fecha_nota = obtener_fecha_valida()
+
+            cursor = conn.cursor()
+            cursor.execute('SELECT clave, nombre FROM clientes')
+            clientes = cursor.fetchall()
+
+            if not clientes:
+                print("No hay clientes registrados. Registra un cliente primero.")
+                return
+            
+            print("\nListado de clientes registrados:")
+            for cliente in clientes:
+                print(f"Clave: {cliente[0]}, Nombre: {cliente[1]}")
+
+            while True:
+                try:
+                    cliente_clave = int(input("Ingresa la clave del cliente: "))
+
+                    if cliente_clave in [cliente[0] for cliente in clientes]:
+                        break
+                    else:
+                        print("La clave ingresada no corresponde a un cliente registrado. Inténtalo de nuevo.")
+                except ValueError:
+                    print("Por favor, ingresa un número de clave válido.")
+                
+            # Mostrar un listado de servicios registrados
+            cursor.execute('SELECT clave, nombre, costo FROM servicios')
+            servicios = cursor.fetchall()
+
+            if not servicios:
+                print("No hay servicios registrados. Registra un servicio primero.")
+                return
+
+            print("\nListado de servicios registrados:")
+            for servicio in servicios:
+                print(f"Clave: {servicio[0]}, Nombre: {servicio[1]}, Costo: {servicio[2]}")
+
+            detalle = []
+            monto_total = 0.0
+
+            while True:
+                try:
+                    servicio_clave = int(input("Ingresa la clave del servicio (0 para finalizar): "))
+                    if servicio_clave == 0:
+                        break
+
+                    # Verificar que el servicio con la clave proporcionada existe
+                    if servicio_clave not in [servicio[0] for servicio in servicios]:
+                        print("El servicio no existe. Ingresa una clave válida.")
+                    else:
+                        # Agregar el costo del servicio al monto total
+                        servicio_costo = [servicio[2] for servicio in servicios if servicio[0] == servicio_clave][0]
+                        monto_total += servicio_costo
+
+                        detalle.append(servicio_clave)
+                except ValueError:
+                    print("\nPor favor, ingresa un número de clave válido.")
+
+            if not detalle:
+                print("\nLa nota no tiene detalles. No se registrará.")
+                return
+
+            # Insertar la nota en la base de datos
+            cursor.execute("INSERT INTO notas (cliente_clave, fecha, monto) VALUES (?, ?, ?)", (cliente_clave, fecha_nota, monto_total))
+            conn.commit()
+
+            # Obtener la clave de la nota recién insertada
+            cursor.execute("SELECT last_insert_rowid()")
+            nota_clave = cursor.fetchone()[0]
+
+            # Insertar los detalles de la nota
+            for servicio_clave in detalle:
+                cursor.execute("INSERT INTO detalle_notas (nota_folio, servicio_clave) VALUES (?, ?)", (nota_clave, servicio_clave))
+                conn.commit()
+
+            print(f"\nNota registrada con éxito. Clave de la nota: {nota_clave}")
+            break
+        except Exception as e:
+            print(f"Error: {str(e)}")
+
+
+# Cancelar una nota
+def cancelar_nota(conn):
+    folio_nota = int(input("Ingresa el folio de la nota a cancelar: "))
+
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM notas WHERE folio = ? AND cancelada = 0", (folio_nota,))
+    nota = cursor.fetchone()
+
+    if nota:
+        print("Datos de la nota:")
+        print("Folio:", nota[0])
+        print("Fecha:", nota[1])
+        print("Total:", nota[2])
+
+        cursor.execute("SELECT s.nombre, s.costo FROM detalle_notas AS dn JOIN servicios AS s ON dn.servicio_clave = s.clave WHERE dn.nota_folio = ?", (folio_nota,))
+        detalles = cursor.fetchall()
+
+        if detalles:
+            print("Detalle de la nota:")
+            for detalle in detalles:
+                print(f"Producto: {detalle[0]}, Precio: {detalle[1]}")
+
+        confirmacion = input("¿Deseas cancelar esta nota? (S/N): ").strip().lower()
+
+        if confirmacion == "s":
+            cursor.execute("UPDATE notas SET cancelada = 1 WHERE folio = ?", (folio_nota,))
+            conn.commit()
+            print("Nota cancelada con éxito.")
+        else:
+            print("Cancelación de la nota cancelada.")
+    else:
+        print("El folio de la nota no se encuentra en el sistema o corresponde a una nota cancelada.")
+
+# Recuperar una nota cancelada
+def recuperar_nota(conn):
+    while True:
+        try:
+            # Mostrar un listado de notas canceladas (sin detalle)
+            cursor = conn.cursor()
+            cursor.execute('SELECT folio, fecha FROM notas WHERE cancelada = 1')
+            notas_canceladas = cursor.fetchall()
+
+            if not notas_canceladas:
+                print("No hay notas canceladas para recuperar.")
+                return
+
+            print("Listado de notas canceladas:")
+            for nota in notas_canceladas:
+                print(f"Folio: {nota[0]}, Fecha: {nota[1]}")
+
+            folio_nota = int(input("Ingresa el folio de la nota que deseas recuperar (0 para cancelar): "))
+
+            if folio_nota == 0:
+                return
+
+            if folio_nota in [nota[0] for nota in notas_canceladas]:
+                # Solicitar confirmación
+                confirmacion = input("¿Deseas recuperar esta nota? (S/N): ").strip().lower()
+
+                if confirmacion == "s":
+                    # Recuperar la nota cambiando el estado
+                    cursor.execute("UPDATE notas SET cancelada = 0 WHERE folio = ?", (folio_nota,))
+                    conn.commit()
+                    print(f"Nota con folio {folio_nota} recuperada exitosamente.")
+                else:
+                    print("Recuperación de la nota cancelada cancelada.")
+            else:
+                print("El folio de la nota no se encuentra en el sistema o no corresponde a una nota cancelada.")
+            break
+        except ValueError:
+            print("Por favor, ingresa un número de folio válido.")
+        except Exception as e:
+            print(f"Error: {str(e)}")
+
+
+def exportar_csv(data, nombre_reporte):
+    while True:
+        try:
+            # Crea un DataFrame de pandas con los datos
+            df = pd.DataFrame(data, columns=["Folio", "Fecha", "Cliente", "Monto"])
+            # Exporta el DataFrame a un archivo CSV
+            df.to_csv(f"{nombre_reporte}.csv", index=False)
+            print(f"Reporte exportado a {nombre_reporte}.csv con éxito.")
+            break
+        except Exception as e:
+            print(f"Error al exportar a CSV: {str(e)}")
+
+
+def exportar_excel(data, nombre_reporte):
+    while True:
+        try:
+            # Crea un nuevo libro de Excel
+            wb = Workbook()
+            # Crea una hoja en el libro
+            ws = wb.active
+
+            # Agrega encabezados
+            ws.append(["Folio", "Fecha", "Cliente", "Monto"])
+
+            # Agrega los datos
+            for row in data:
+                ws.append(row)
+
+            # Guarda el libro de Excel
+            wb.save(f"{nombre_reporte}.xlsx")
+            print(f"Reporte exportado a {nombre_reporte}.xlsx con éxito.")
+            break
+        except Exception as e:
+            print(f"Error al exportar a Excel: {str(e)}")
+            
+def consultar_notas_por_periodo(conn):
+    while True:
+        try:
+            fecha_inicial_input = input("Ingresa la fecha inicial (DD-MM-YYYY) o deja en blanco para asumir 01-01-2000: ")
+            fecha_final_input = input("Ingresa la fecha final (DD-MM-YYYY) o deja en blanco para asumir la fecha actual: ")
+
+            if fecha_inicial_input.strip() == "":
+                fecha_inicial = datetime(2000, 1, 1)
+                print("Fecha inicial asumida: 01-01-2000")
+            else:
+                fecha_inicial = datetime.strptime(fecha_inicial_input, '%d-%m-%Y')
+
+            if fecha_final_input.strip() == "":
+                fecha_final = datetime.now()
+                print(f"Fecha final asumida: {fecha_final.strftime('%d-%m-%Y')}")
+            else:
+                fecha_final = datetime.strptime(fecha_final_input, '%d-%m-%Y')
+
+            if fecha_final < fecha_inicial:
+                print("La fecha final no puede ser anterior a la fecha inicial.")
+                continue
+
+            # Realizar la consulta y obtener las notas en el período
+            cursor = conn.cursor()
+            cursor.execute("SELECT notas.folio, notas.fecha, clientes.nombre, notas.monto FROM notas INNER JOIN clientes ON notas.cliente_clave = clientes.clave WHERE notas.fecha >= ? AND notas.fecha <= ? AND notas.cancelada = 0", (fecha_inicial, fecha_final))
+            notas = cursor.fetchall()
+
+            if not notas:
+                print("\nNo hay notas emitidas y no canceladas para el período seleccionado.")
+                return
+
+            # Calcular el monto promedio de las notas del período
+            monto_promedio = sum(nota[3] for nota in notas) / len(notas)
+
+            # Mostrar el reporte
+            print("\nReporte de notas por período:")
+            print(f"Fecha Inicial: {fecha_inicial.strftime('%d-%m-%Y')}")
+            print(f"Fecha Final: {fecha_final.strftime('%d-%m-%Y')}")
+            print(f"Monto Promedio: {monto_promedio}")
+
+            for nota in notas:
+                print(f"Folio: {nota[0]}, Fecha: {nota[1]}, Cliente: {nota[2]}, Monto: {nota[3]}")
+
+            exportar_formato = input("\n¿Deseas exportar este reporte a CSV o Excel? (CSV/Excel/N): ")
+            if exportar_formato.upper() == 'CSV':
+                nombre_reporte = f"ReportePorPeriodo_{fecha_inicial.strftime('%m_%d_%Y')}_{fecha_final.strftime('%m_%d_%Y')}"
+                exportar_csv(notas, nombre_reporte)
+            elif exportar_formato.upper() == 'EXCEL':
+                nombre_reporte = f"ReportePorPeriodo_{fecha_inicial.strftime('%m_%d_%Y')}_{fecha_final.strftime('%m_%d_%Y')}"
+                exportar_excel(notas, nombre_reporte)
+            elif exportar_formato.upper() == 'N':
+                print("\nReporte no exportado.")
+            else:
+                print("\nOpción no válida. Reporte no exportado.")
+            break
+        except Exception as e:
+            print(f"Error: {str(e)}")
+
+
+def exportar_csv(datos, nombre_reporte):
+    nombre_archivo = f"{nombre_reporte}.csv"
+    with open(nombre_archivo, 'w', newline='') as archivo_csv:
+        escritor_csv = csv.writer(archivo_csv)
+        escritor_csv.writerow(["Folio", "Fecha", "Cliente", "Monto"])
+        for dato in datos:
+            escritor_csv.writerow([dato[0], dato[1].strftime('%d-%m-%Y'), dato[2], dato[3]])
+    print(f"Reporte exportado a {nombre_archivo}")
+
+def exportar_excel(datos, nombre_reporte):
+    nombre_archivo = f"{nombre_reporte}.xlsx"
+    libro_excel = Workbook()
+    hoja_excel = libro_excel.active
+    hoja_excel.append(["Folio", "Fecha", "Cliente", "Monto"])
+    for dato in datos:
+        hoja_excel.append([dato[0], dato[1].strftime('%d-%m-%Y'), dato[2], dato[3]])
+    libro_excel.save(nombre_archivo)
+    print(f"Reporte exportado a {nombre_archivo}")
+
+
+def consultar_nota_por_folio(conn):
+    while True:
+        try:
+            folio_nota = int(input("Ingrese el folio de la nota a consultar (0 para cancelar): "))
+
+            if folio_nota == 0:
+                return
+
+            cursor = conn.cursor()
+            cursor.execute("SELECT folio, fecha, cliente_clave, monto FROM notas WHERE folio = ? AND cancelada = 0", (folio_nota,))
+            nota = cursor.fetchone()
+
+            if nota:
+                folio, fecha, cliente_clave, monto = nota
+
+                # Obtener el nombre del cliente
+                cursor.execute("SELECT nombre FROM clientes WHERE clave = ?", (cliente_clave,))
+                cliente_nombre = cursor.fetchone()[0]
+
+                print("\nDetalles de la nota:")
+                print(f"Folio: {folio}")
+                print(f"Fecha: {fecha}")
+                print(f"Cliente: {cliente_nombre}")
+                print(f"Monto: {monto}")
+
+                # Mostrar el detalle de la nota
+                cursor.execute("SELECT s.nombre FROM detalle_notas AS dn JOIN servicios AS s ON dn.servicio_clave = s.clave WHERE dn.nota_folio = ?", (folio,))
+                detalles = cursor.fetchall()
+
+                if detalles:
+                    # Mostrar el detalle de los servicios
+                    print("\nDetalle de los Servicios:")
+                    cursor.execute("SELECT s.nombre, s.costo FROM detalle_notas AS dn JOIN servicios AS s ON dn.servicio_clave = s.clave WHERE dn.nota_folio = ?", (folio,))
+                    servicios = cursor.fetchall()
+                    for servicio in servicios:
+                        print(f"Producto: {servicio[0]}, Costo: {servicio[1]}")
+                else:
+                    print("La nota no tiene detalles.")
+
+            else:
+                print("La nota con el folio proporcionado no se encuentra en la base de datos o ha sido cancelada.")
+            
+            break
+        except ValueError:
+            print("Por favor, ingrese un número de folio válido.")
+        except Exception as e:
+            print(f"Error: {str(e)}")
+
+def agregar_cliente(conn):
+    while True:
+        try:
+            # Generar una clave única para el cliente
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(clave) FROM clientes")
+            last_clave = cursor.fetchone()[0]
+            nueva_clave = 1 if last_clave is None else last_clave + 1
+
+            print("\nIngresa los datos del nuevo cliente:")
+            nombre = input("Nombre completo del cliente: ")
+
+            # Pide el RFC y verifica si es válido
+            while True:
+                rfc = input("RFC del cliente: ")
+                if not rfc.strip():
+                    print("El RFC no puede quedar vacío.")
+                    continue
+                if validar_rfc(rfc):
+                    break
+                else:
+                    print("RFC no válido. Inténtalo de nuevo.")
+
+            # Pide el correo y verifica si es válido
+            while True:
+                correo = input("Correo electrónico del cliente: ")
+                if not correo.strip():
+                    print("El correo no puede quedar vacío.")
+                    continue
+                if validar_correo(correo):
+                    break
+                else:
+                    print("Correo electrónico no válido. Inténtalo de nuevo.")
+
+            # Insertar el nuevo cliente en la base de datos
+            cursor.execute("INSERT INTO clientes (clave, nombre, rfc, correo) VALUES (?, ?, ?, ?)", (nueva_clave, nombre, rfc, correo))
+            conn.commit()
+            print("\nCliente agregado con éxito.")
+            break
+        except sqlite3.Error as e:
+            print("Error al agregar cliente:", e)
+
+def listar_clientes_por_clave(conn):
+    while True:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT clave, nombre, rfc, correo FROM clientes ORDER BY clave")
+            clientes = cursor.fetchall()
+
+            if not clientes:
+                print("\nNo hay clientes registrados.")
+                return
+
+            print("\nListado de clientes ordenados por clave:")
+            for cliente in clientes:
+                print(f"Clave: {cliente[0]}, Nombre: {cliente[1]}, RFC: {cliente[2]}, Correo: {cliente[3]}")
+
+            while True:
+                exportar_reporte = input("\n¿Deseas exportar este reporte? (S/N): ")
+                if exportar_reporte.upper() == 'S':
+                    formato_elegido = input("Selecciona el formato de exportación (CSV/Excel): ")
+                    fecha_actual = dt.datetime.now().strftime('%m_%d_%Y')  
+                    nombre_reporte = f"ReporteClientesActivosPorClave_{fecha_actual}"
+
+                    if formato_elegido.upper() == 'CSV':
+                        exportar_csv_cl(clientes, nombre_reporte)
+                    elif formato_elegido.upper() == 'EXCEL':
+                        exportar_excel_cl(clientes, nombre_reporte)
+                    else:
+                        print("\nFormato no válido. Reporte no exportado.")
+                    break
+                elif exportar_reporte.upper() == 'N':
+                    print("\nReporte no exportado.")
+                    break
+                else:
+                    print("\nEntrada no válida. Por favor, ingresa 'S' para exportar o 'N' para no exportar.")
+            break
+        except Exception as e:
+            print(f"Error: {str(e)}")
+
+
+
+def listar_clientes_por_nombre(conn):
+    while True:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT clave, nombre, rfc, correo FROM clientes ORDER BY nombre")
+            clientes = cursor.fetchall()
+
+            if not clientes:
+                print("\nNo hay clientes registrados.")
+                return
+
+            print("\nListado de clientes ordenados por nombre:")
+            for cliente in clientes:
+                print(f"Clave: {cliente[0]}, Nombre: {cliente[1]}, RFC: {cliente[2]}, Correo: {cliente[3]}")
+
+            while True:
+                exportar_reporte = input("\n¿Deseas exportar este reporte? (S/N): ")
+                if exportar_reporte.upper() == 'S':
+                    formato_elegido = input("Selecciona el formato de exportación (CSV/Excel): ")
+                    fecha_actual = dt.datetime.now().strftime('%m_%d_%Y')  
+                    nombre_reporte = f"ReporteClientesPorNombre_{fecha_actual}"
+
+                    if formato_elegido.upper() == 'CSV':
+                        exportar_csv_cl(clientes, nombre_reporte)
+                    elif formato_elegido.upper() == 'EXCEL':
+                        exportar_excel_cl(clientes, nombre_reporte)
+                    else:
+                        print("Formato no válido. Reporte no exportado.")
+                    break
+                elif exportar_reporte.upper() == 'N':
+                    print("\nReporte no exportado.")
+                    break
+                else:
+                    print("\nEntrada no válida. Por favor, ingresa 'S' para exportar o 'N' para no exportar.")
+            break
+        except Exception as e:
+            print(f"Error: {str(e)}")
+
+
+
+def exportar_csv_cl(data, nombre_reporte):
+    try:
+        with open(f"{nombre_reporte}.csv", 'w', newline='') as csvfile:
+            fieldnames = ['Clave', 'Nombre', 'RFC', 'Correo']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for cliente in data:
+                writer.writerow({'Clave': cliente[0], 'Nombre': cliente[1], 'RFC': cliente[2], 'Correo': cliente[3]})
+
+        print(f"Reporte exportado a {nombre_reporte}.csv con éxito.")
+    except Exception as e:
+        print(f"Error al exportar CSV: {str(e)}")
+
+def exportar_excel_cl(data, nombre_reporte):
+    try:
+        # Crea un DataFrame con los datos
+        df = pd.DataFrame(data, columns=['Clave', 'Nombre', 'RFC', 'Correo'])
+
+        # Utiliza pandas para exportar a Excel
+        df.to_excel(f"{nombre_reporte}.xlsx", index=False)
+
+        print(f"Reporte exportado a {nombre_reporte}.xlsx con éxito.")
+    except Exception as e:
+        print(f"Error al exportar Excel: {str(e)}")
+
+
+def agregar_servicio(conn):
+    while True:
+        try:
+            # Generar una clave única para el servicio
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(clave) FROM servicios")
+            last_clave = cursor.fetchone()[0]
+            nueva_clave = 1 if last_clave is None else last_clave + 1
+
+            print("Ingresa los datos del nuevo servicio:")
+            nombre = input("Nombre del servicio: ")
+            costo_str = input("Costo del servicio: ")
+
+            # Validar los datos antes de la inserción
+            if not nombre.strip():
+                print("El nombre del servicio no puede quedar vacío.")
+                continue
+
+            try:
+                costo = float(costo_str)
+                if costo <= 0:
+                    print("El costo del servicio debe ser superior a 0.00.")
+                    continue
+            except ValueError:
+                print("Por favor, ingresa un costo válido (número).")
+                continue
+
+            # Insertar el nuevo servicio en la base de datos
+            cursor.execute("INSERT INTO servicios (clave, nombre, costo) VALUES (?, ?, ?)", (nueva_clave, nombre, costo))
+            conn.commit()
+            print("Servicio agregado con éxito.")
+            break
+        except Exception as e:
+            print(f"Error: {str(e)}")
+
+
+            
+def exportar_resultado(data, nombre_reporte, formato):
+    while True:
+        try:
+            if formato == 'CSV':
+                exportar_csv(data, nombre_reporte)
+                break
+            elif formato == 'Excel':
+                exportar_excel(data, nombre_reporte)
+                break
+            else:
+                formato = input("Formato no válido. El reporte no se exportó. Selecciona un formato válido (CSV/Excel): ").strip()
+        except Exception as e:
+            print(f"Error al exportar resultado: {str(e)}")
+import pandas as pd
+
+def exportar_excel(data, nombre_reporte):
+    while True:
+        try:
+            # Asegúrate de que 'data' sea una lista de diccionarios con las columnas correctas
+            # Si tus datos no están en este formato, ajústalos antes de llamar a esta función.
+            df = pd.DataFrame(data)
+            df.to_excel(f"{nombre_reporte}.xlsx", index=False)
+            print(f"Reporte exportado a {nombre_reporte}.xlsx con éxito.")
+            break
+        except Exception as e:
+            print(f"Error al exportar Excel: {str(e)}")
+
+def exportar_csv(data, nombre_reporte):
+    while True:
+        try:
+            # Asegúrate de que 'data' sea una lista de diccionarios con las columnas correctas
+            # Si tus datos no están en este formato, ajústalos antes de llamar a esta función.
+            df = pd.DataFrame(data)
+            df.to_csv(f"{nombre_reporte}.csv", index=False)
+            print(f"Reporte exportado a {nombre_reporte}.csv con éxito.")
+            break
+        except Exception as e:
+            print(f"Error al exportar CSV: {str(e)}")
+
+
+            
+def buscar_servicio_por_clave(conn):
+    while True:
+        try:
+            clave_servicio = int(input("Ingresa la clave del servicio a buscar: "))
+            cursor = conn.cursor()
+            cursor.execute("SELECT clave, nombre, costo FROM servicios WHERE clave = ?", (clave_servicio,))
+            servicio = cursor.fetchone()
+
+            if servicio is None:
+                print(f"\nNo se encontró un servicio con la clave {clave_servicio}.")
+                break
+
+            # Convierte el resultado de la consulta en un diccionario
+            servicio_con_etiquetas = {"clave": servicio[0], "nombre": servicio[1], "costo": servicio[2]}
+
+            print("\nDetalles del servicio:")
+            print(f"Clave: {servicio_con_etiquetas['clave']}, Nombre: {servicio_con_etiquetas['nombre']}, Costo: {servicio_con_etiquetas['costo']}")
+
+            while True:
+                exportar_reporte = input("\n¿Deseas exportar este resultado? (S/N): ").strip().upper()
+                if exportar_reporte == 'S':
+                    formato_elegido = input("Selecciona el formato de exportación (CSV/Excel): ").strip().upper()
+                    nombre_reporte = f"ReporteServicioPorClave_{clave_servicio}"
+
+                    if formato_elegido == 'CSV':
+                        exportar_csv([servicio_con_etiquetas], nombre_reporte)
+                        break
+                    elif formato_elegido == 'EXCEL':
+                        exportar_excel([servicio_con_etiquetas], nombre_reporte)
+                        break
+                    else:
+                        print("\nFormato no válido. El reporte no se exportó.")
+                elif exportar_reporte == 'N':
+                    print("\nReporte no exportado.")
+                    break
+                else:
+                    print("\nEntrada no válida. Por favor, ingresa 'S' para exportar o 'N' para no exportar.")
+            break
+        except ValueError:
+            print("Por favor, ingresa un número de clave válido.")
+        except Exception as e:
+            print(f"Error al buscar servicio por clave: {str(e)}")
+
+
+def buscar_servicio_por_nombre(conn):
+    while True:
+        try:
+            nombre_servicio = input("Ingresa el nombre del servicio a buscar: ")
+            cursor = conn.cursor()
+            cursor.execute("SELECT clave, nombre, costo FROM servicios WHERE UPPER(nombre) LIKE ?", (f"%{nombre_servicio.upper()}%",))
+            servicios = cursor.fetchall()
+
+            if not servicios:
+                print(f"\nNo se encontraron servicios con el nombre '{nombre_servicio}'.")
+                break
+
+            # Convierte los resultados de la consulta en una lista de diccionarios
+            servicios_con_etiquetas = [{"clave": servicio[0], "nombre": servicio[1], "costo": servicio[2]} for servicio in servicios]
+
+            print(f"\nDetalles de los servicios con el nombre '{nombre_servicio}':")
+            for servicio in servicios_con_etiquetas:
+                print(f"Clave: {servicio['clave']}, Nombre: {servicio['nombre']}, Costo: {servicio['costo']}")
+
+            while True:
+                exportar_reporte = input("\n¿Deseas exportar este resultado? (S/N): ").strip().upper()
+                if exportar_reporte == 'S':
+                    formato_elegido = input("Selecciona el formato de exportación (CSV/Excel): ").strip().upper()
+                    nombre_reporte = f"ReporteServiciosPorNombre_{nombre_servicio}"
+
+                    if formato_elegido == 'CSV':
+                        exportar_csv(servicios_con_etiquetas, nombre_reporte)
+                        break
+                    elif formato_elegido == 'EXCEL':
+                        exportar_excel(servicios_con_etiquetas, nombre_reporte)
+                        break
+                    else:
+                        print("\nFormato no válido. Reporte no exportado.")
+                elif exportar_reporte == 'N':
+                    print("\nReporte no exportado.")
+                    break
+                else:
+                    print("\nEntrada no válida. Por favor, ingresa 'S' para exportar o 'N' para no exportar.")
+            break
+        except Exception as e:
+            print(f"Error al buscar servicio por nombre: {str(e)}")
+
+
+
+def listar_servicios_por_clave(conn):
+    while True:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT clave, nombre, costo FROM servicios ORDER BY clave")
+            servicios = cursor.fetchall()
+
+            if not servicios:
+                print("No hay servicios registrados.")
+                break
+
+            # Convierte los resultados de la consulta en una lista de diccionarios
+            servicios_con_etiquetas = [{"clave": servicio[0], "nombre": servicio[1], "costo": servicio[2]} for servicio in servicios]
+
+            print("\nListado de servicios ordenados por clave:")
+            print("Clave  |  Nombre de Servicio  |  Costo")
+            print("----------------------------------------")
+            for servicio in servicios_con_etiquetas:
+                print(f"{servicio['clave']:<6} |  {servicio['nombre']:<20} |  {servicio['costo']}")
+
+            while True:
+                exportar_reporte = input("\n¿Deseas exportar este resultado? (S/N): ").strip().upper()
+                if exportar_reporte == 'S':
+                    formato_elegido = input("Selecciona el formato de exportación (CSV/Excel): ").strip().upper()
+                    fecha_actual = dt.datetime.now().strftime('%m_%d_%Y')  
+                    nombre_reporte = f"ReporteServiciosPorClave_{fecha_actual}"
+
+                    if formato_elegido == 'CSV':
+                        exportar_csv(servicios_con_etiquetas, nombre_reporte)
+                        break
+                    elif formato_elegido == 'EXCEL':
+                        exportar_excel(servicios_con_etiquetas, nombre_reporte)
+                        break
+                    else:
+                        print("Formato no válido. Reporte no exportado.")
+                elif exportar_reporte == 'N':
+                    print("\nReporte no exportado.")
+                    break
+                else:
+                    print("\nEntrada no válida. Por favor, ingresa 'S' para exportar o 'N' para no exportar.")
+            break
+        except Exception as e:
+            print(f"Error al listar servicios por clave: {str(e)}")
+
+def listar_servicios_por_nombre(conn):
+    while True:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT clave, nombre, costo FROM servicios ORDER BY nombre")
+            servicios = cursor.fetchall()
+
+            if not servicios:
+                print("No hay servicios registrados.")
+                break
+
+            # Convierte los resultados de la consulta en una lista de diccionarios
+            servicios_con_etiquetas = [{"clave": servicio[0], "nombre": servicio[1], "costo": servicio[2]} for servicio in servicios]
+
+            print("\nListado de servicios ordenados por nombre:")
+            print("Clave  |  Nombre de Servicio  |  Costo")
+            print("----------------------------------------")
+            for servicio in servicios_con_etiquetas:
+                print(f"{servicio['clave']:<6} |  {servicio['nombre']:<20} |  {servicio['costo']}")
+
+            while True:
+                exportar_reporte = input("\n¿Deseas exportar este resultado? (S/N): ").strip().upper()
+                if exportar_reporte == 'S':
+                    formato_elegido = input("Selecciona el formato de exportación (CSV/Excel): ").strip().upper()
+                    fecha_actual = dt.datetime.now().strftime('%m_%d_%Y')  
+                    nombre_reporte = f"ReporteServiciosPorNombre_{fecha_actual}"
+
+                    if formato_elegido == 'CSV':
+                        exportar_csv(servicios_con_etiquetas, nombre_reporte)
+                        break
+                    elif formato_elegido == 'EXCEL':
+                        exportar_excel(servicios_con_etiquetas, nombre_reporte)
+                        break
+                    else:
+                        print("\nFormato no válido. Reporte no exportado.")
+                elif exportar_reporte == 'N':
+                    print("\nReporte no exportado.")
+                    break
+                else:
+                    print("\nEntrada no válida. Por favor, ingresa 'S' para exportar o 'N' para no exportar.")
+            break
+        except Exception as e:
+            print(f"Error al listar servicios por nombre: {str(e)}")
+
+
+def menu_notas(conn):
+    while True:
+        try:
+            print("\nMenú Notas")
+            print("1. Registrar una nota")
+            print("2. Cancelar una nota")
+            print("3. Recuperar una nota")
+            print("4. Consultas y reportes de notas")
+            print("5. Volver al menú principal")
+
+            opcion = input("Selecciona una opción: ")
+
+            if opcion == '1':
+                registrar_nota(conn)
+            elif opcion == '2':
+                cancelar_nota(conn)
+            elif opcion == '3':
+                recuperar_nota(conn)
+            elif opcion == '4':
+                submenu_consultas_notas(conn)
+            elif opcion == '5':
+                break
+            else:
+                print("Opción no válida. Inténtalo de nuevo.")
+        except Exception as e:
+            print(f"Error en el menú de notas: {str(e)}")
+
+def submenu_consultas_notas(conn):
+    while True:
+        try:
+            print("\nConsultas y Reportes de Notas")
+            print("1. Consulta por período")
+            print("2. Consulta por folio")
+            print("3. Volver al menú Notas")
+
+            opcion = input("Selecciona una opción: ")
+
+            if opcion == '1':
+                consultar_notas_por_periodo(conn)
+            elif opcion == '2':
+                consultar_nota_por_folio(conn)
+            elif opcion == '3':
+                break
+            else:
+                print("Opción no válida. Inténtalo de nuevo.")
+        except Exception as e:
+            print(f"Error en el menú de consultas de notas: {str(e)}")
+
+def menu_clientes(conn):
+    while True:
+        try:
+            print("\nMenú Clientes")
+            print("1. Agregar un cliente")
+            print("2. Consultas y reportes de clientes")
+            print("3. Volver al menú principal")
+
+            opcion = input("\nSelecciona una opción: ")
+
+            if opcion == '1':
+                agregar_cliente(conn)
+            elif opcion == '2':
+                submenu_consultas_clientes(conn)
+            elif opcion == '3':
+                break
+            else:
+                print("\nOpción no válida. Inténtalo de nuevo.")
+        except Exception as e:
+            print(f"Error en el menú de clientes: {str(e)}")
+
+def submenu_consultas_clientes(conn):
+    while True:
+        try:
+            print("\nConsultas y Reportes de Clientes")
+            print("1. Listado de clientes registrados por clave")
+            print("2. Listado de clientes registrados por nombre")
+            print("3. Volver al menú Clientes")
+            opcion = input("Selecciona una opción: ")
+
+            if opcion == "1":
+                listar_clientes_por_clave(conn)
+            elif opcion == "2":
+                listar_clientes_por_nombre(conn)
+            elif opcion == "3":
+                break
+            else:
+                print("\nOpción no válida. Por favor, selecciona una opción válida.")
+        except Exception as e:
+            print(f"Error en el menú de consultas de clientes: {str(e)}")
+
+def menu_servicios(conn):
+    while True:
+        try:
+            print("\nMenú Servicios")
+            print("1. Agregar un servicio")
+            print("2. Consultas y reportes de servicios")
+            print("3. Volver al menú principal")
+
+            opcion = input("\nSelecciona una opción: ")
+
+            if opcion == '1':
+                agregar_servicio(conn)
+            elif opcion == '2':
+                submenu_consultas_servicios(conn)
+            elif opcion == '3':
+                break
+            else:
+                print("\nOpción no válida. Inténtalo de nuevo.")
+        except Exception as e:
+            print(f"Error en el menú de servicios: {str(e)}")
+
+def submenu_consultas_servicios(conn):
+    while True:
+        try:
+            print("\nConsultas y Reportes de Servicios")
+            print("1. Búsqueda por clave de servicio")
+            print("2. Búsqueda por nombre de servicio")
+            print("3. Listado de servicios por clave")
+            print("4. Listado de servicios por nombre")
+            print("5. Volver al menú Servicios")
+
+            opcion = input("Selecciona una opción: ")
+
+            if opcion == '1':
+                buscar_servicio_por_clave(conn)
+            elif opcion == '2':
+                buscar_servicio_por_nombre(conn)
+            elif opcion == '3':
+                listar_servicios_por_clave(conn)
+            elif opcion == '4':
+                listar_servicios_por_nombre(conn)
+            elif opcion == '5':
+                break
+            else:
+                print("\nOpción no válida. Inténtalo de nuevo.")
+        except Exception as e:
+            print(f"Error en el menú de consultas de servicios: {str(e)}")
+
+def inicializar_base_de_datos():
+    try:
+        conn = sqlite3.connect("taller_mecanico.db")
+        print("Conexión a la base de datos exitosa.")
+        return conn
+    except sqlite3.Error as e:
+        print("Error al conectar a la base de datos:", e)
+        return None
+
+    
+def main():
+    print("Bienvenido al Taller Mecánico")
+    conn = inicializar_base_de_datos()
+
+    if conn is not None:
+        create_tables(conn)
+
+        while True:
+            try:
+                print("\nMenú Principal")
+                print("1. Notas")
+                print("2. Clientes")
+                print("3. Servicios")
+                print("4. Salir")
+
+                opcion = input("Selecciona una opción: ")
+
+                if opcion == '1':
+                    menu_notas(conn)
+                elif opcion == '2':
+                    menu_clientes(conn)
+                elif opcion == '3':
+                    menu_servicios(conn)
+                elif opcion == '4':
+                    print("Gracias por utilizar el sistema. ¡Hasta luego!")
+                    break
+                else:
+                    print("Opción no válida. Inténtalo de nuevo.")
+            except Exception as e:
+                print(f"Error en el menú principal: {str(e)}")
+
+if __name__ == "__main__":
+    main()

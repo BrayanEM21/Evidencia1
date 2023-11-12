@@ -12,12 +12,11 @@ import pandas as pd
 
 
 
-# Conectar a la base de datos SQLite (creará un nuevo archivo si no existe)
 def connect_to_database():
     conn = sqlite3.connect('taller_mecanico.db')
     return conn
 
-# Crear tablas en la base de datos (clientes, servicios, notas)
+
 def create_tables(conn):
     cursor = conn.cursor()
     cursor.execute('''
@@ -85,7 +84,7 @@ def obtener_fecha_valida(formato='DD-MM-YYYY'):
         fecha_input = fecha_input.strip()
 
         if fecha_input == '':
-            continue  # Si se deja en blanco, continuar pidiendo la fecha
+            continue  
 
         if formato == 'DD-MM-YYYY':
             try:
@@ -127,7 +126,7 @@ def registrar_nota(conn):
                 except ValueError:
                     print("Por favor, ingresa un número de clave válido.")
                 
-            # Mostrar un listado de servicios registrados
+
             cursor.execute('SELECT clave, nombre, costo FROM servicios')
             servicios = cursor.fetchall()
 
@@ -148,11 +147,11 @@ def registrar_nota(conn):
                     if servicio_clave == 0:
                         break
 
-                    # Verificar que el servicio con la clave proporcionada existe
+                   
                     if servicio_clave not in [servicio[0] for servicio in servicios]:
                         print("El servicio no existe. Ingresa una clave válida.")
                     else:
-                        # Agregar el costo del servicio al monto total
+                      
                         servicio_costo = [servicio[2] for servicio in servicios if servicio[0] == servicio_clave][0]
                         monto_total += servicio_costo
 
@@ -164,15 +163,15 @@ def registrar_nota(conn):
                 print("\nLa nota no tiene detalles. No se registrará.")
                 return
 
-            # Insertar la nota en la base de datos
+          
             cursor.execute("INSERT INTO notas (cliente_clave, fecha, monto) VALUES (?, ?, ?)", (cliente_clave, fecha_nota, monto_total))
             conn.commit()
 
-            # Obtener la clave de la nota recién insertada
+           
             cursor.execute("SELECT last_insert_rowid()")
             nota_clave = cursor.fetchone()[0]
 
-            # Insertar los detalles de la nota
+           
             for servicio_clave in detalle:
                 cursor.execute("INSERT INTO detalle_notas (nota_folio, servicio_clave) VALUES (?, ?)", (nota_clave, servicio_clave))
                 conn.commit()
@@ -183,7 +182,7 @@ def registrar_nota(conn):
             print(f"Error: {str(e)}")
 
 
-# Cancelar una nota
+
 def cancelar_nota(conn):
     folio_nota = int(input("Ingresa el folio de la nota a cancelar: "))
 
@@ -216,11 +215,11 @@ def cancelar_nota(conn):
     else:
         print("El folio de la nota no se encuentra en el sistema o corresponde a una nota cancelada.")
 
-# Recuperar una nota cancelada
+
 def recuperar_nota(conn):
     while True:
         try:
-            # Mostrar un listado de notas canceladas (sin detalle)
+           
             cursor = conn.cursor()
             cursor.execute('SELECT folio, fecha FROM notas WHERE cancelada = 1')
             notas_canceladas = cursor.fetchall()
@@ -239,11 +238,11 @@ def recuperar_nota(conn):
                 return
 
             if folio_nota in [nota[0] for nota in notas_canceladas]:
-                # Solicitar confirmación
+                
                 confirmacion = input("¿Deseas recuperar esta nota? (S/N): ").strip().lower()
 
                 if confirmacion == "s":
-                    # Recuperar la nota cambiando el estado
+                  
                     cursor.execute("UPDATE notas SET cancelada = 0 WHERE folio = ?", (folio_nota,))
                     conn.commit()
                     print(f"Nota con folio {folio_nota} recuperada exitosamente.")
@@ -261,9 +260,9 @@ def recuperar_nota(conn):
 def exportar_csv(data, nombre_reporte):
     while True:
         try:
-            # Crea un DataFrame de pandas con los datos
+           
             df = pd.DataFrame(data, columns=["Folio", "Fecha", "Cliente", "Monto"])
-            # Exporta el DataFrame a un archivo CSV
+            
             df.to_csv(f"{nombre_reporte}.csv", index=False)
             print(f"Reporte exportado a {nombre_reporte}.csv con éxito.")
             break
@@ -274,19 +273,19 @@ def exportar_csv(data, nombre_reporte):
 def exportar_excel(data, nombre_reporte):
     while True:
         try:
-            # Crea un nuevo libro de Excel
+        
             wb = Workbook()
-            # Crea una hoja en el libro
+       
             ws = wb.active
 
-            # Agrega encabezados
+         
             ws.append(["Folio", "Fecha", "Cliente", "Monto"])
 
-            # Agrega los datos
+         
             for row in data:
                 ws.append(row)
 
-            # Guarda el libro de Excel
+          
             wb.save(f"{nombre_reporte}.xlsx")
             print(f"Reporte exportado a {nombre_reporte}.xlsx con éxito.")
             break
@@ -315,7 +314,7 @@ def consultar_notas_por_periodo(conn):
                 print("La fecha final no puede ser anterior a la fecha inicial.")
                 continue
 
-            # Realizar la consulta y obtener las notas en el período
+            
             cursor = conn.cursor()
             cursor.execute("SELECT notas.folio, notas.fecha, clientes.nombre, notas.monto FROM notas INNER JOIN clientes ON notas.cliente_clave = clientes.clave WHERE notas.fecha >= ? AND notas.fecha <= ? AND notas.cancelada = 0", (fecha_inicial, fecha_final))
             notas = cursor.fetchall()
@@ -324,7 +323,7 @@ def consultar_notas_por_periodo(conn):
                 print("\nNo hay notas emitidas y no canceladas para el período seleccionado.")
                 return
 
-            # Calcular el monto promedio de las notas del período
+            
             monto_promedio = sum(nota[3] for nota in notas) / len(notas)
 
             # Mostrar el reporte
@@ -387,7 +386,7 @@ def consultar_nota_por_folio(conn):
             if nota:
                 folio, fecha, cliente_clave, monto = nota
 
-                # Obtener el nombre del cliente
+            
                 cursor.execute("SELECT nombre FROM clientes WHERE clave = ?", (cliente_clave,))
                 cliente_nombre = cursor.fetchone()[0]
 
@@ -397,12 +396,12 @@ def consultar_nota_por_folio(conn):
                 print(f"Cliente: {cliente_nombre}")
                 print(f"Monto: {monto}")
 
-                # Mostrar el detalle de la nota
+            
                 cursor.execute("SELECT s.nombre FROM detalle_notas AS dn JOIN servicios AS s ON dn.servicio_clave = s.clave WHERE dn.nota_folio = ?", (folio,))
                 detalles = cursor.fetchall()
 
                 if detalles:
-                    # Mostrar el detalle de los servicios
+                 
                     print("\nDetalle de los Servicios:")
                     cursor.execute("SELECT s.nombre, s.costo FROM detalle_notas AS dn JOIN servicios AS s ON dn.servicio_clave = s.clave WHERE dn.nota_folio = ?", (folio,))
                     servicios = cursor.fetchall()
@@ -423,7 +422,7 @@ def consultar_nota_por_folio(conn):
 def agregar_cliente(conn):
     while True:
         try:
-            # Generar una clave única para el cliente
+         
             cursor = conn.cursor()
             cursor.execute("SELECT MAX(clave) FROM clientes")
             last_clave = cursor.fetchone()[0]
@@ -432,7 +431,7 @@ def agregar_cliente(conn):
             print("\nIngresa los datos del nuevo cliente:")
             nombre = input("Nombre completo del cliente: ")
 
-            # Pide el RFC y verifica si es válido
+          
             while True:
                 rfc = input("RFC del cliente: ")
                 if not rfc.strip():
@@ -443,7 +442,7 @@ def agregar_cliente(conn):
                 else:
                     print("RFC no válido. Inténtalo de nuevo.")
 
-            # Pide el correo y verifica si es válido
+           
             while True:
                 correo = input("Correo electrónico del cliente: ")
                 if not correo.strip():
@@ -454,7 +453,7 @@ def agregar_cliente(conn):
                 else:
                     print("Correo electrónico no válido. Inténtalo de nuevo.")
 
-            # Insertar el nuevo cliente en la base de datos
+            
             cursor.execute("INSERT INTO clientes (clave, nombre, rfc, correo) VALUES (?, ?, ?, ?)", (nueva_clave, nombre, rfc, correo))
             conn.commit()
             print("\nCliente agregado con éxito.")
@@ -558,10 +557,10 @@ def exportar_csv_cl(data, nombre_reporte):
 
 def exportar_excel_cl(data, nombre_reporte):
     try:
-        # Crea un DataFrame con los datos
+        
         df = pd.DataFrame(data, columns=['Clave', 'Nombre', 'RFC', 'Correo'])
 
-        # Utiliza pandas para exportar a Excel
+        
         df.to_excel(f"{nombre_reporte}.xlsx", index=False)
 
         print(f"Reporte exportado a {nombre_reporte}.xlsx con éxito.")
@@ -572,7 +571,7 @@ def exportar_excel_cl(data, nombre_reporte):
 def agregar_servicio(conn):
     while True:
         try:
-            # Generar una clave única para el servicio
+            
             cursor = conn.cursor()
             cursor.execute("SELECT MAX(clave) FROM servicios")
             last_clave = cursor.fetchone()[0]
@@ -582,7 +581,7 @@ def agregar_servicio(conn):
             nombre = input("Nombre del servicio: ")
             costo_str = input("Costo del servicio: ")
 
-            # Validar los datos antes de la inserción
+            
             if not nombre.strip():
                 print("El nombre del servicio no puede quedar vacío.")
                 continue
@@ -596,7 +595,7 @@ def agregar_servicio(conn):
                 print("Por favor, ingresa un costo válido (número).")
                 continue
 
-            # Insertar el nuevo servicio en la base de datos
+           
             cursor.execute("INSERT INTO servicios (clave, nombre, costo) VALUES (?, ?, ?)", (nueva_clave, nombre, costo))
             conn.commit()
             print("Servicio agregado con éxito.")
@@ -657,7 +656,7 @@ def buscar_servicio_por_clave(conn):
                 print(f"\nNo se encontró un servicio con la clave {clave_servicio}.")
                 break
 
-            # Convierte el resultado de la consulta en un diccionario
+            
             servicio_con_etiquetas = {"clave": servicio[0], "nombre": servicio[1], "costo": servicio[2]}
 
             print("\nDetalles del servicio:")
@@ -701,7 +700,7 @@ def buscar_servicio_por_nombre(conn):
                 print(f"\nNo se encontraron servicios con el nombre '{nombre_servicio}'.")
                 break
 
-            # Convierte los resultados de la consulta en una lista de diccionarios
+           
             servicios_con_etiquetas = [{"clave": servicio[0], "nombre": servicio[1], "costo": servicio[2]} for servicio in servicios]
 
             print(f"\nDetalles de los servicios con el nombre '{nombre_servicio}':")
@@ -744,7 +743,7 @@ def listar_servicios_por_clave(conn):
                 print("No hay servicios registrados.")
                 break
 
-            # Convierte los resultados de la consulta en una lista de diccionarios
+           
             servicios_con_etiquetas = [{"clave": servicio[0], "nombre": servicio[1], "costo": servicio[2]} for servicio in servicios]
 
             print("\nListado de servicios ordenados por clave:")
@@ -788,7 +787,7 @@ def listar_servicios_por_nombre(conn):
                 print("No hay servicios registrados.")
                 break
 
-            # Convierte los resultados de la consulta en una lista de diccionarios
+            
             servicios_con_etiquetas = [{"clave": servicio[0], "nombre": servicio[1], "costo": servicio[2]} for servicio in servicios]
 
             print("\nListado de servicios ordenados por nombre:")
@@ -845,7 +844,7 @@ def servicios_mas_prestados(conn):
 
             if not resultados:
                 print("No hay datos para el período especificado.")
-                continue  # Vuelve al inicio del bucle para pedir la entrada nuevamente
+                continue 
 
             print("\nServicios más prestados:")
             print("Servicio | Cantidad")
@@ -867,7 +866,7 @@ def servicios_mas_prestados(conn):
                 else:
                     print("Formato no válido. Reporte no exportado.")
 
-            break  # Sale del bucle si todo se ejecuta correctamente
+            break 
 
         except ValueError:
             print("Error: Ingresa un número válido.")
@@ -898,7 +897,7 @@ def clientes_con_mas_notas(conn):
 
             if not resultados:
                 print("No hay datos para el período especificado.")
-                continue  # Vuelve al inicio del bucle para pedir la entrada nuevamente
+                continue 
 
             print("\nClientes con más notas:")
             print("Nombre del Cliente | Cantidad")
@@ -920,16 +919,16 @@ def clientes_con_mas_notas(conn):
                 else:
                     print("Formato no válido. Reporte no exportado.")
 
-            break  # Sale del bucle si todo se ejecuta correctamente
+            break 
 
         except ValueError:
             print("Error: Ingresa un número válido.")
-            continue  # Vuelve al inicio del bucle para pedir la entrada nuevamente
+            continue  
         except Exception as e:
             print(f"Error en la función clientes_con_mas_notas: {str(e)}")
-            break  # Sale del bucle si hay otro tipo de error
+            break 
 
-# Funciones para exportar a CSV y Excel
+
 def exportar_csv_e(resultados, nombre_reporte):
     try:
         df = pd.DataFrame(resultados, columns=['Nombre', 'Cantidad'])
@@ -946,7 +945,7 @@ def exportar_excel_e(resultados, nombre_reporte):
     except Exception as e:
         print(f"Error al exportar a Excel: {str(e)}")
 
-# Ejemplo de uso en tu función promedio_montos_notas
+
 def promedio_montos_notas(conn):
     while True:
         try:
@@ -983,19 +982,17 @@ def promedio_montos_notas(conn):
                     else:
                         print("Formato no válido. Reporte no exportado.")
 
-                break  # Sale del bucle si todo se ejecuta correctamente
+                break
 
             else:
                 print("No hay datos para el período especificado.")
-                break  # Sale del bucle si no hay datos
-
+                break 
         except ValueError as ve:
             print(f"Error al procesar las fechas: {ve}. Inténtalo de nuevo.")
-            continue  # Vuelve al inicio del bucle para pedir la entrada nuevamente
+            continue  
         except Exception as e:
             print(f"Error en la función promedio_montos_notas: {str(e)}")
-            break  # Sale del bucle si hay otro tipo de error
-
+            break 
 def menu_notas(conn):
     while True:
         try:
@@ -1212,5 +1209,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
 
 
